@@ -1,126 +1,153 @@
 import "./styles.css";
-
-const project = {
-  "sourceNo": 8,
-  "id": "hxyfront-62013",
-  "port": 62013,
-  "title": "木结构榫卯构件测绘",
-  "domain": "古建木结构",
-  "prompt": "开发一个古建筑木结构榫卯构件测绘前端项目，测绘人员可以录入建筑名称、构件编号、木材种类、榫卯类型、截面尺寸、病害位置、变形情况和修缮建议。页面需要有构件清单、榫卯类型筛选、尺寸记录表、病害标记图和单栋建筑的构件关系视图。",
-  "palette": [
-    "#854d0e",
-    "#475569",
-    "#0f766e"
-  ],
-  "metrics": [
-    "构件数量",
-    "病害点",
-    "榫卯类型",
-    "待修缮"
-  ],
-  "filters": [
-    "燕尾榫",
-    "透榫",
-    "半榫",
-    "箍头榫"
-  ],
-  "fields": [
-    "建筑名称",
-    "构件编号",
-    "木材种类",
-    "榫卯类型",
-    "截面尺寸",
-    "修缮建议"
-  ],
-  "records": [
-    [
-      "梁架A-03",
-      "透榫",
-      "截面180x240mm",
-      "端部开裂"
-    ],
-    [
-      "柱网C-12",
-      "楠木",
-      "柱脚糟朽",
-      "建议局部墩接"
-    ],
-    [
-      "斗拱D-07",
-      "半榫",
-      "轻微变形",
-      "继续监测"
-    ]
-  ]
-};
+import { useMemo } from "react";
+import { useSurveyStation } from "./business/pageState";
+import { componentsOfBuilding, hasThroughCrack } from "./business/componentLedger";
+import { currentVersion } from "./business/batchRules";
+import { Sidebar } from "./components/Sidebar";
+import { BatchPanel } from "./components/BatchPanel";
+import { LedgerPanel } from "./components/LedgerPanel";
+import { ResurveyPanel } from "./components/ResurveyPanel";
+import { ReleaseDesk } from "./components/ReleaseDesk";
+import { RelationGraph } from "./components/RelationGraph";
 
 function App() {
+  const {
+    state,
+    runRule,
+    selectedBuilding,
+    selectBuilding,
+    setFilter,
+    viewVersion,
+    dismissNotice,
+    resetDemo,
+  } = useSurveyStation();
+
+  const { data } = state;
+  const buildingComponents = useMemo(
+    () => componentsOfBuilding(data.components, selectedBuilding.id),
+    [data.components, selectedBuilding.id]
+  );
+  const batch = data.batches.find((item) => item.buildingId === selectedBuilding.id);
+  const viewedVersionNumber = batch
+    ? state.viewedVersionByBatch[batch.id] ??
+      batch.versions[batch.versions.length - 1].version
+    : undefined;
+  const viewedVersion = batch
+    ? batch.versions.find((version) => version.version === viewedVersionNumber) ??
+      currentVersion(batch)
+    : null;
+
+  const totalComponents = data.components.length;
+  const diseasePoints = data.components.reduce(
+    (sum, component) => sum + component.diseases.length,
+    0
+  );
+  const tenonKinds = new Set(data.components.map((component) => component.tenonType)).size;
+  const throughCount = data.components.filter(hasThroughCrack).length;
+  const pendingOrders = data.orders.filter((order) => order.status === "pending").length;
+
   return (
-    <main className="app">
+    <main className="app station">
       <section className="hero">
-        <p>{project.id} · 源提示词{project.sourceNo} · Port {project.port}</p>
-        <h1>{project.title}</h1>
-        <span>{project.prompt}</span>
+        <p>hxyfront-62013 · 古建木结构 · 勘测批次封样与替代构件放行台</p>
+        <h1>榫卯勘测批次封样与替代构件放行台</h1>
+        <span>
+          测绘员在此完成单栋建筑的封样批次管理：开工锁定木种、编号、截面，缺项仅可补录；
+          贯穿裂缝走替代件放行（木种 / 截面 / 榫型一致且未占用，否则整单退回不留占用）；
+          补测冻结原批关系边与修缮建议，换人两次确认后按新值重算，旧版只读。全部数据本地持久化，刷新后清单、关系图与批次状态一致。
+        </span>
       </section>
 
       <section className="metrics">
-        {project.metrics.map((metric: string, index: number) => (
-          <article key={metric}>
-            <small>{metric}</small>
-            <strong>{[28, 6, 14, 91][index] ?? 10}</strong>
-          </article>
+        <article>
+          <small>构件数量</small>
+          <strong>{totalComponents}</strong>
+        </article>
+        <article>
+          <small>病害点</small>
+          <strong>{diseasePoints}</strong>
+        </article>
+        <article>
+          <small>榫卯类型</small>
+          <strong>{tenonKinds}</strong>
+        </article>
+        <article>
+          <small>贯穿裂缝 / 待放行</small>
+          <strong>{throughCount} / {pendingOrders}</strong>
+        </article>
+      </section>
+
+      <div className="toast-stack">
+        {state.notices.map((notice) => (
+          <div key={notice.id} className={`toast toast-${notice.kind}`}>
+            <span>{notice.text}</span>
+            <button onClick={() => dismissNotice(notice.id)}>×</button>
+          </div>
         ))}
-      </section>
+      </div>
 
-      <section className="workspace">
-        <aside className="panel">
-          <h2>{project.domain}分类</h2>
-          <div className="chips">
-            {project.filters.map((item: string) => (
-              <button key={item}>{item}</button>
-            ))}
-          </div>
-        </aside>
+      <section className="workspace station-grid">
+        <Sidebar
+          buildings={data.buildings}
+          batches={data.batches}
+          selectedBuildingId={selectedBuilding.id}
+          onSelect={selectBuilding}
+          filter={state.tenonFilter}
+          onFilter={setFilter}
+          onReset={resetDemo}
+        />
 
-        <section className="panel form-panel">
-          <div className="heading">
-            <div>
-              <p>专业字段</p>
-              <h2>新增记录</h2>
-            </div>
-            <button className="primary">保存记录</button>
-          </div>
-          <div className="field-grid">
-            {project.fields.map((field: string) => (
-              <label key={field}>
-                <span>{field}</span>
-                <input placeholder={"填写" + field} />
-              </label>
-            ))}
-          </div>
-        </section>
-      </section>
+        <div className="station-main">
+          <BatchPanel
+            buildingId={selectedBuilding.id}
+            buildingName={selectedBuilding.name}
+            batch={batch}
+            viewedVersion={viewedVersionNumber}
+            runRule={runRule}
+            onViewVersion={viewVersion}
+          />
 
-      <section className="panel">
-        <div className="heading">
-          <div>
-            <p>近期记录</p>
-            <h2>工作台摘要</h2>
-          </div>
-          <button>导出CSV</button>
+          <LedgerPanel
+            components={buildingComponents}
+            batch={batch}
+            orders={data.orders}
+            stock={data.stock}
+            filter={state.tenonFilter}
+            runRule={runRule}
+          />
+
+          {batch ? (
+            <ResurveyPanel
+              batch={batch}
+              components={buildingComponents}
+              runRule={runRule}
+            />
+          ) : null}
+
+          <RelationGraph
+            buildingName={selectedBuilding.name}
+            version={viewedVersion}
+            links={selectedBuilding.links}
+            isOld={
+              Boolean(batch) &&
+              viewedVersionNumber! < batch!.versions[batch!.versions.length - 1].version
+            }
+            frozen={batch?.status === "resurveying"}
+          />
         </div>
-        <div className="records">
-          {project.records.map((record: string[], index: number) => (
-            <article key={record.join("-")}>
-              <b>{String(index + 1).padStart(2, "0")}</b>
-              <div>
-                <h3>{record[0]}</h3>
-                <p>{record.slice(1).join(" · ")}</p>
-              </div>
-            </article>
-          ))}
-        </div>
       </section>
+
+      <ReleaseDesk
+        orders={data.orders}
+        stock={data.stock}
+        buildings={data.buildings}
+        components={data.components}
+        runRule={runRule}
+      />
+
+      <footer className="station-foot">
+        关系边状态与修缮建议均按封样版本快照冻结；补测重算仅追加新版本，不覆盖旧版。
+      </footer>
     </main>
   );
 }
