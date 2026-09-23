@@ -1,126 +1,156 @@
+import { useMemo, useState } from "react";
 import "./styles.css";
+import { dispatch, useAppState } from "./business/pageState";
+import { selectBuildingView } from "./business/selectBuildingView";
+import { buildingMembers, hasThroughCrack, stockItems } from "./business/ledger";
+import BatchConsole from "./components/BatchConsole";
+import LedgerPanel from "./components/LedgerPanel";
+import RelationGraph from "./components/RelationGraph";
+import ReleaseStation from "./components/ReleaseStation";
+import ResurveyPanel from "./components/ResurveyPanel";
 
-const project = {
-  "sourceNo": 8,
-  "id": "hxyfront-62013",
-  "port": 62013,
-  "title": "木结构榫卯构件测绘",
-  "domain": "古建木结构",
-  "prompt": "开发一个古建筑木结构榫卯构件测绘前端项目，测绘人员可以录入建筑名称、构件编号、木材种类、榫卯类型、截面尺寸、病害位置、变形情况和修缮建议。页面需要有构件清单、榫卯类型筛选、尺寸记录表、病害标记图和单栋建筑的构件关系视图。",
-  "palette": [
-    "#854d0e",
-    "#475569",
-    "#0f766e"
-  ],
-  "metrics": [
-    "构件数量",
-    "病害点",
-    "榫卯类型",
-    "待修缮"
-  ],
-  "filters": [
-    "燕尾榫",
-    "透榫",
-    "半榫",
-    "箍头榫"
-  ],
-  "fields": [
-    "建筑名称",
-    "构件编号",
-    "木材种类",
-    "榫卯类型",
-    "截面尺寸",
-    "修缮建议"
-  ],
-  "records": [
-    [
-      "梁架A-03",
-      "透榫",
-      "截面180x240mm",
-      "端部开裂"
-    ],
-    [
-      "柱网C-12",
-      "楠木",
-      "柱脚糟朽",
-      "建议局部墩接"
-    ],
-    [
-      "斗拱D-07",
-      "半榫",
-      "轻微变形",
-      "继续监测"
-    ]
-  ]
-};
+const TABS = [
+  { key: "ledger", label: "构件清单" },
+  { key: "graph", label: "关系图" },
+  { key: "release", label: "替代放行台" },
+] as const;
 
 function App() {
+  const state = useAppState((s) => s);
+  const [viewVersion, setViewVersion] = useState<number | null>(null);
+
+  const view = useMemo(
+    () =>
+      selectBuildingView(
+        state.components,
+        state.batches,
+        state.selectedBuildingId,
+        viewVersion
+      ),
+    [state.components, state.batches, state.selectedBuildingId, viewVersion]
+  );
+
+  const building = state.buildings.find((b) => b.id === state.selectedBuildingId)!;
+
+  const metrics = useMemo(() => {
+    const members = buildingMembers(state.components, state.selectedBuildingId);
+    const diseaseCount = members.reduce((n, c) => n + c.diseases.length, 0);
+    const joints = new Set(members.map((c) => c.joint)).size;
+    const cracks = members.filter(hasThroughCrack).length;
+    return [
+      { label: "在役构件", value: members.length },
+      { label: "病害记录", value: diseaseCount },
+      { label: "榫卯类型", value: joints },
+      { label: "贯穿裂缝待替代", value: cracks },
+      { label: "库内空闲备用件", value: stockItems(state.components).filter((s) => s.buildingId === "STOCK").length },
+    ];
+  }, [state.components, state.selectedBuildingId]);
+
+  const frozen = view.batch?.status === "补测冻结";
+
   return (
     <main className="app">
-      <section className="hero">
-        <p>{project.id} · 源提示词{project.sourceNo} · Port {project.port}</p>
-        <h1>{project.title}</h1>
-        <span>{project.prompt}</span>
-      </section>
+      <header className="hero">
+        <p>hxyfront-62013 · 古建木结构勘测</p>
+        <h1>勘测批次封样与替代构件放行台</h1>
+        <span>
+          每栋建筑唯一封样批次；开工锁定木种、编号与截面，缺含水率 / 病害仅可补录；
+          贯穿裂缝只能申请木种、截面、榫型一致且未被占用的替代件，否则整单退回不留占用；
+          补测冻结原批关系边与建议，换人两次确认后按新值重算，旧版只读。
+        </span>
+      </header>
 
       <section className="metrics">
-        {project.metrics.map((metric: string, index: number) => (
-          <article key={metric}>
-            <small>{metric}</small>
-            <strong>{[28, 6, 14, 91][index] ?? 10}</strong>
+        {metrics.map((m) => (
+          <article key={m.label}>
+            <small>{m.label}</small>
+            <strong>{m.value}</strong>
           </article>
         ))}
       </section>
 
-      <section className="workspace">
-        <aside className="panel">
-          <h2>{project.domain}分类</h2>
-          <div className="chips">
-            {project.filters.map((item: string) => (
-              <button key={item}>{item}</button>
-            ))}
-          </div>
-        </aside>
+      <nav className="building-tabs">
+        {state.buildings.map((b) => {
+          const bBatch = state.batches.find((x) => x.buildingId === b.id);
+          return (
+            <button
+              key={b.id}
+              className={b.id === state.selectedBuildingId ? "bt-on" : ""}
+              onClick={() => {
+                dispatch({ type: "selectBuilding", buildingId: b.id });
+                setViewVersion(null);
+              }}
+            >
+              {b.name}
+              {bBatch && <i className={`mini-badge mini-${bBatch.status}`}>{bBatch.status}</i>}
+              {!bBatch && <i className="mini-badge mini-none">未封样</i>}
+            </button>
+          );
+        })}
+      </nav>
 
-        <section className="panel form-panel">
-          <div className="heading">
-            <div>
-              <p>专业字段</p>
-              <h2>新增记录</h2>
+      <section className="workspace-wide">
+        <BatchConsole
+          building={building}
+          batch={view.batch}
+          viewVersion={viewVersion}
+          onSeal={(sealedBy) => dispatch({ type: "seal", sealedBy })}
+          onStart={() => dispatch({ type: "start" })}
+          onViewVersion={setViewVersion}
+          onReset={() => {
+            dispatch({ type: "resetDemo" });
+            setViewVersion(null);
+          }}
+        />
+
+        <div className="main-area">
+          <nav className="main-tabs">
+            {TABS.map((t) => (
+              <button
+                key={t.key}
+                className={state.tab === t.key ? "mt-on" : ""}
+                onClick={() => dispatch({ type: "selectTab", tab: t.key })}
+              >
+                {t.label}
+              </button>
+            ))}
+            {view.batch && view.batch.status !== "已封样" && !view.snapshot && (
+              <button
+                className={frozen ? "mt-on pulse" : ""}
+                onClick={() => dispatch({ type: "selectTab", tab: "ledger" })}
+              >
+                {frozen ? "● 补测冻结中" : "重测补算"}
+              </button>
+            )}
+          </nav>
+
+          {viewVersion !== null && (
+            <div className="banner banner-readonly version-banner">
+              正在回看 v{viewVersion}（{view.snapshot?.type} · {view.snapshot?.surveyor}）：
+              清单与关系图为该版本冻结值，切换「当前值」恢复实时视图。
             </div>
-            <button className="primary">保存记录</button>
-          </div>
-          <div className="field-grid">
-            {project.fields.map((field: string) => (
-              <label key={field}>
-                <span>{field}</span>
-                <input placeholder={"填写" + field} />
-              </label>
-            ))}
-          </div>
-        </section>
+          )}
+
+          {state.tab === "ledger" && (
+            <>
+              <LedgerPanel view={view} />
+              {view.batch && view.batch.status !== "已封样" && !view.snapshot && (
+                <ResurveyPanel view={view} />
+              )}
+            </>
+          )}
+          {state.tab === "graph" && <RelationGraph view={view} />}
+          {state.tab === "release" && <ReleaseStation view={view} />}
+        </div>
       </section>
 
-      <section className="panel">
-        <div className="heading">
-          <div>
-            <p>近期记录</p>
-            <h2>工作台摘要</h2>
+      <div className="notice-stack">
+        {state.notices.map((n) => (
+          <div key={n.id} className={`notice notice-${n.tone}`} onClick={() => dispatch({ type: "dismissNotice", id: n.id })}>
+            {n.text}
           </div>
-          <button>导出CSV</button>
-        </div>
-        <div className="records">
-          {project.records.map((record: string[], index: number) => (
-            <article key={record.join("-")}>
-              <b>{String(index + 1).padStart(2, "0")}</b>
-              <div>
-                <h3>{record[0]}</h3>
-                <p>{record.slice(1).join(" · ")}</p>
-              </div>
-            </article>
-          ))}
-        </div>
-      </section>
+        ))}
+      </div>
     </main>
   );
 }
